@@ -1,0 +1,724 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>AegisSchool MIS - Single File App</title>
+    <meta name="description" content="AegisSchool MIS — Bromcom-style demo for attendance, behaviour, timetable and reports. Single-file, offline, localStorage-backed." />
+    <meta property="og:title" content="AegisSchool MIS" />
+    <meta property="og:description" content="Single-file Bromcom-style MIS demo. Offline, localStorage persistence, attendance, behaviour logs, CSV export." />
+    <meta name="theme-color" content="#0b74d1" />
+    <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' fill='%23007ACC'/><text x='50' y='65' font-size='60' text-anchor='middle' fill='white' font-family='Arial' font-weight='700'>A</text></svg>" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <style>body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial}</style>
+  </head>
+  <body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+const { useState, useEffect } = React;
+
+// LocalStorage helpers
+const LS_KEY = 'aegis_mis_v1';
+function loadStore(){
+  try{ return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }catch(e){return {};}
+}
+function saveStore(state){ localStorage.setItem(LS_KEY, JSON.stringify(state)); }
+
+// Default structure
+const DEFAULT = {
+  users: [],
+  students: [],
+  attendance: {}, // date -> {studentId: 'P'|'L'|'A'}
+  behaviour: [], // {id, studentId, score, delta, note, date}
+  timetable: {}, // day -> [p1..p5]
+  assessments: [] // {id, studentId, subject, mark, date}
+};
+
+function uid(prefix='id'){return prefix+'_'+Math.random().toString(36).slice(2,9);} 
+
+function ensureStore(){
+  const s = loadStore();
+  const merged = Object.assign({}, DEFAULT, s);
+  ['Monday','Tuesday','Wednesday','Thursday','Friday'].forEach(d=>{
+    if(!merged.timetable[d]) merged.timetable[d]=['','','','',''];
+  });
+  if(!merged.users || merged.users.length===0){
+    merged.users = [{id:uid('user'),username:'demo',password:'demo123',role:'Teacher'}];
+  }
+  // Add sample students if none exist
+  if(!merged.students || merged.students.length===0){
+    merged.students = [
+      {id:uid('stu'), name:'abid', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'rakeeb', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'rais', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'nasir', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'idress', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'sebi', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'rehan', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'ambo', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'sajad', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'usman', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'shaf', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'aqeel', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'arfan', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'waqas', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'syed', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'nadeem', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'shazi', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'haffis', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'adeel', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'tahir', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'fasil', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false},
+      {id:uid('stu'), name:'hamza', points:0, detention:false, detentionDate:null, detentionHistory:[], revealed:false}
+    ];
+  }
+  saveStore(merged);
+  return merged;
+}
+
+function todayKey(){ return new Date().toISOString().slice(0,10); }
+
+function clearExpiredDetentions(state){
+  const today = todayKey();
+  const students = (state.students||[]).map(s=>{
+    if(s.detentionDate && s.detentionDate !== today){
+      return {...s, detention:false, detentionDate:null};
+    }
+    return s;
+  });
+  return {...state, students};
+}
+
+function exportCSV(filename, rows){
+  const csv = rows.map(r => r.map(c=> '"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function statusClass(code){
+  switch(code){
+    case 'P': return 'bg-emerald-500 text-white';
+    case 'A': return 'bg-red-500 text-white';
+    case 'L': return 'bg-amber-400 text-slate-800';
+    case 'H': return 'bg-sky-400 text-white';
+    case 'I': return 'bg-violet-500 text-white';
+    default: return 'bg-slate-100 text-slate-800';
+  }
+}
+
+function dashedName(name){
+  if(!name) return '';
+  // show letters separated by dashes, keep spaces as single dash
+  return name.split('').map(c => c === ' ' ? '-' : c).join('-');
+}
+
+function App(){
+  const [store, setStore] = useState(ensureStore());
+  const [user, setUser] = useState(null);
+  const [page, setPage] = useState('dashboard');
+  const [lastAttendance, setLastAttendance] = useState(null); // {type:'single'|'bulk', payload:...}
+
+  useEffect(()=> saveStore(store), [store]);
+
+  // Clear expired detentions on mount and schedule midnight reset
+  useEffect(()=>{
+    // Clear now if any expired
+    const cleaned = clearExpiredDetentions(store);
+    if(JSON.stringify(cleaned.students) !== JSON.stringify(store.students)){
+      setStore(cleaned);
+      saveStore(cleaned);
+    }
+
+    // compute ms until next midnight
+    const now = new Date();
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate()+1);
+    const msUntilMidnight = tomorrow.getTime() - now.getTime();
+
+    const timeoutId = setTimeout(()=>{
+      const cleaned2 = clearExpiredDetentions(loadStore());
+      saveStore(cleaned2);
+      setStore(cleaned2);
+      // after first run, set interval every 24h
+      const intervalId = setInterval(()=>{
+        const cleaned3 = clearExpiredDetentions(loadStore());
+        saveStore(cleaned3);
+        setStore(cleaned3);
+      }, 24*60*60*1000);
+      // attach intervalId to window so cleanup can clear it if needed
+      window.__aegis_detention_interval = intervalId;
+    }, msUntilMidnight + 1000);
+
+    return ()=>{ clearTimeout(timeoutId); if(window.__aegis_detention_interval) clearInterval(window.__aegis_detention_interval); };
+  }, []);
+
+  function updateStore(patch){ setStore(prev=>{ const next = {...prev, ...patch}; saveStore(next); return next; }); }
+
+  function createAccount(username,password,role){
+    if(!username||!password) return false;
+    if(store.users.find(u=>u.username===username)) return false;
+    const u = {id:uid('user'),username,password,role};
+    const next = {...store, users: [...store.users, u]};
+    setStore(next); setUser(u); return true;
+  }
+
+  function login(username,password){
+    const u = store.users.find(x=>x.username===username && x.password===password);
+    if(u){ setUser(u); return true; }
+    return false;
+  }
+
+  function logout(){ setUser(null); setPage('dashboard'); }
+
+  function addStudent(name){ if(!name) return; const s = {id:uid('stu'),name,points:0,detention:false,detentionDate:null,detentionHistory:[],revealed:false}; updateStore({students:[...store.students, s]}); }
+
+  function toggleReveal(studentId){
+    const students = store.students.map(s=> s.id===studentId ? {...s, revealed: !s.revealed} : s );
+    updateStore({students});
+  }
+
+  function revealAll(){
+    const students = store.students.map(s=> ({...s, revealed:true}));
+    updateStore({students});
+  }
+
+  function hideAll(){
+    const students = store.students.map(s=> ({...s, revealed:false}));
+    updateStore({students});
+  }
+
+  function recordAttendance(date, studentId, code){
+    const att = {...store.attendance};
+    att[date] = att[date] || {};
+    const prev = att[date][studentId] || null;
+    att[date][studentId] = code;
+    updateStore({attendance:att});
+    setLastAttendance({type:'single', date, studentId, prev});
+  }
+
+  function bulkMark(date, code){
+    const att = {...store.attendance};
+    att[date] = att[date] || {};
+    // record previous map for undo
+    const prevMap = {...att[date]};
+    store.students.forEach(s=> att[date][s.id] = code);
+    updateStore({attendance:att});
+    setLastAttendance({type:'bulk', date, prevMap});
+  }
+
+  function undoLastAttendance(){
+    if(!lastAttendance) return alert('Nothing to undo');
+    const att = {...store.attendance};
+    if(lastAttendance.type==='single'){
+      const {date, studentId, prev} = lastAttendance;
+      att[date] = att[date] || {};
+      if(prev===null) delete att[date][studentId]; else att[date][studentId]=prev;
+      updateStore({attendance:att});
+      setLastAttendance(null);
+    } else if(lastAttendance.type==='bulk'){
+      const {date, prevMap} = lastAttendance;
+      att[date] = prevMap || {};
+      updateStore({attendance:att});
+      setLastAttendance(null);
+    }
+  }
+
+  function recordBehaviour(studentId, score, delta, note){
+    const entry = {id:uid('beh'),studentId,score,delta:Number(delta)||0,note,date:new Date().toISOString()};
+    const behaviour = [...store.behaviour, entry];
+
+    // Determine detentions: if in recent window the student has at least two 4s and one 5
+    // and is marked Late today, assign detention. Window: last 14 days.
+    const now = new Date();
+    const windowDays = 14;
+    const cutoff = new Date(now.getTime() - windowDays * 24*60*60*1000);
+    const recent = behaviour.filter(b=> b.studentId===studentId && new Date(b.date) >= cutoff);
+    const count4 = recent.filter(b=> b.score===4).length;
+    const count5 = recent.filter(b=> b.score===5).length;
+    const todayKeyLocal = now.toISOString().slice(0,10);
+    const attToday = (store.attendance && store.attendance[todayKeyLocal]) ? store.attendance[todayKeyLocal][studentId] : null;
+    const isLateToday = attToday === 'L';
+
+    const prevStudent = store.students.find(s=>s.id===studentId);
+
+    const students = store.students.map(s=>{
+      if(s.id===studentId){
+        const pts = (s.points||0) + entry.delta;
+        // Detention logic: existing detentions remain; add if rule matches or points severe
+        const ruleDetention = (count4 >= 2 && count5 >= 1 && isLateToday);
+        const pointsDetention = pts <= -5;
+        const det = !!(s.detention || ruleDetention || pointsDetention);
+        const detDate = det ? todayKey() : null;
+        // manage detention history: add a record only when detention newly assigned
+        const prevHist = Array.isArray(s.detentionHistory) ? s.detentionHistory : [];
+        const newHist = (!s.detention && det) ? [...prevHist, {date: todayKey(), reason: (ruleDetention? 'Behaviour rule':'Points threshold')} ] : prevHist;
+        // reveal student when behaviour recorded
+        return {...s, points:pts, detention: det, detentionDate: detDate, detentionHistory: newHist, revealed: true};
+      }
+      return s;
+    });
+
+    // If a detention was just assigned by rule, also add a behaviour log note for traceability
+    const newStudent = students.find(s=>s.id===studentId);
+    const detentionAssigned = !!(newStudent && newStudent.detention && !prevStudent.detention);
+    if(detentionAssigned){
+      entry.note = (entry.note ? entry.note + ' — ' : '') + 'Detention assigned (behaviour rule)';
+    }
+
+    updateStore({behaviour, students});
+    return {entry, detentionAssigned, student: newStudent};
+  }
+
+  function setTimetable(day, arr){ const t = {...store.timetable, [day]: arr}; updateStore({timetable:t}); }
+
+  function saveAssessment(studentId, subject, mark){ const a={id:uid('ass'),studentId,subject,mark,date:new Date().toISOString()}; updateStore({assessments:[...store.assessments,a]}); }
+
+  function exportAttendanceCSV(){
+    const rows = [['Date','Student','Status']];
+    Object.entries(store.attendance).forEach(([date, map])=>{
+      store.students.forEach(s=>{
+        const status = map[s.id] || '';
+        rows.push([date, s.name, status]);
+      });
+    });
+    const stamp = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    exportCSV(`attendance_${stamp}.csv`, rows);
+  }
+
+  function exportBehaviourCSV(){
+    const rows = [['Date','Student','Score','Delta','Note']];
+    store.behaviour.forEach(b=>{
+      const s = store.students.find(x=>x.id===b.studentId);
+      rows.push([b.date, s? s.name: b.studentId, b.score, b.delta, b.note||'']);
+    });
+    const stamp = new Date().toISOString().slice(0,10).replace(/-/g,'');
+    exportCSV(`behaviour_${stamp}.csv`, rows);
+  }
+
+  function speak(text){ try{ const ut = new SpeechSynthesisUtterance(text); window.speechSynthesis.cancel(); window.speechSynthesis.speak(ut);}catch(e){alert('TTS not supported in this browser');} }
+
+  return (
+    <div className="min-h-screen flex">
+      <aside className="w-64 bg-white shadow p-4 hidden md:block">
+        <h1 className="text-xl font-semibold mb-4">AegisSchool MIS</h1>
+        <nav className="space-y-2" role="navigation" aria-label="Main navigation">
+          <button onClick={()=>setPage('dashboard')} aria-label="Dashboard" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M3 11.5L12 4l9 7.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg> Dashboard</button>
+          <button onClick={()=>setPage('students')} aria-label="Students" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M20 21v-2a4 4 0 0 0-3-3.87" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M4 21v-2a4 4 0 0 1 3-3.87" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12" cy="7" r="4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg> Students</button>
+          <button onClick={()=>setPage('attendance')} aria-label="Attendance" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M16 2v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg> Attendance</button>
+          <button onClick={()=>setPage('behaviour')} aria-label="Behaviour" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 20v-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><circle cx="12" cy="7" r="3" stroke="currentColor" strokeWidth="1.5"/></svg> Behaviour</button>
+          <button onClick={()=>setPage('timetable')} aria-label="Timetable" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M8 7h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M3 5h18v14H3z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg> Timetable</button>
+          <button onClick={()=>setPage('assessments')} aria-label="Assessments" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 20v-8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M16 12v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/><path d="M8 12v8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg> Assessments</button>
+          <button onClick={()=>setPage('reports')} aria-label="Reports" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M21 15V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M7 10h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg> Reports</button>
+          <button onClick={()=>setPage('pa')} aria-label="PA System" className="w-full text-left px-2 py-1 rounded hover:bg-slate-100 flex items-center gap-2"> <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M15 5l7 7-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M3 12h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg> PA System</button>
+        </nav>
+        <div className="mt-6 border-t pt-4">
+          {user ? (
+            <div>
+              <div className="text-sm">Signed in as <strong>{user.username}</strong></div>
+              <div className="text-xs">Role: {user.role}</div>
+              <button onClick={logout} className="mt-2 text-red-600">Logout</button>
+            </div>
+          ) : (
+            <div className="text-sm text-slate-500">Not signed in</div>
+          )}
+        </div>
+      </aside>
+
+      <main className="flex-1 p-6">
+        <header className="w-full bg-sky-700 text-white p-3 rounded mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="text-lg font-bold">AegisSchool</div>
+            <div className="text-sm opacity-80">MIS • Bromcom-style demo</div>
+          </div>
+          <div className="hidden md:flex items-center gap-3 text-sm">
+            <div className="px-2 py-1 bg-white/10 rounded">Demo mode</div>
+            <button onClick={revealAll} className="px-2 py-1 bg-white text-sky-700 rounded">Reveal all</button>
+            <button onClick={hideAll} className="px-2 py-1 bg-white text-sky-700 rounded">Hide all</button>
+            <button onClick={undoLastAttendance} aria-label="Undo last attendance" title="Undo last attendance" className="px-2 py-1 bg-yellow-400 text-sky-900 rounded">Undo</button>
+          </div>
+        </header>
+        <div className="md:hidden mb-4">
+          <select onChange={(e)=>setPage(e.target.value)} value={page} className="w-full p-2">
+            <option value="dashboard">Dashboard</option>
+            <option value="students">Students</option>
+            <option value="attendance">Attendance</option>
+            <option value="behaviour">Behaviour</option>
+            <option value="timetable">Timetable</option>
+            <option value="assessments">Assessments</option>
+            <option value="reports">Reports</option>
+            <option value="pa">PA System</option>
+          </select>
+        </div>
+
+        {!user ? (
+          <Auth onLogin={login} onCreate={createAccount} />
+        ) : (
+          <div>
+            {page==='dashboard' && <Dashboard store={store} />}
+            {page==='students' && <Students store={store} addStudent={addStudent} toggleReveal={toggleReveal} />}
+            {page==='attendance' && <Attendance store={store} recordAttendance={recordAttendance} toggleReveal={toggleReveal} />}
+            {page==='behaviour' && <Behaviour store={store} recordBehaviour={recordBehaviour} toggleReveal={toggleReveal} />}
+            {page==='timetable' && <Timetable store={store} setTimetable={setTimetable} />}
+            {page==='assessments' && <Assessments store={store} saveAssessment={saveAssessment} />}
+            {page==='reports' && <Reports exportAttendance={exportAttendanceCSV} exportBehaviour={exportBehaviourCSV} clearAll={()=>{if(confirm('Clear all data permanently?')){localStorage.removeItem(LS_KEY); location.reload();}}} />}
+            {page==='pa' && <PA speak={speak} />}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function Auth({onLogin,onCreate}){
+  const [mode,setMode]=useState('login');
+  const [username,setUsername]=useState('');
+  const [password,setPassword]=useState('');
+  const [role,setRole]=useState('Teacher');
+  function submit(e){ e.preventDefault(); if(mode==='login'){ if(!onLogin(username,password)) alert('Invalid credentials'); } else { if(!onCreate(username,password,role)) alert('Unable to create account (maybe username exists)'); }}
+  return (
+    <div className="max-w-xl mx-auto bg-white p-6 rounded shadow">
+      <h2 className="text-2xl mb-2">{mode==='login'?'Login':'Create Account'}</h2>
+      <form onSubmit={submit} className="space-y-3">
+        <input value={username} onChange={e=>setUsername(e.target.value)} placeholder="Username" className="w-full p-2 border" />
+        <input value={password} type="password" onChange={e=>setPassword(e.target.value)} placeholder="Password" className="w-full p-2 border" />
+        {mode==='create' && (
+          <select value={role} onChange={e=>setRole(e.target.value)} className="w-full p-2 border">
+            <option>Teacher</option>
+            <option>Admin</option>
+          </select>
+        )}
+        <div className="flex gap-2">
+          <button type="submit" className="px-4 py-2 bg-sky-600 text-white rounded">{mode==='login'?'Login':'Create'}</button>
+          <button type="button" onClick={()=>setMode(mode==='login'?'create':'login')} className="px-4 py-2 border rounded">{mode==='login'?'Create account':'Back to login'}</button>
+        </div>
+      </form>
+      <div className="mt-3 text-xs text-slate-500">Demo: username=demo password=demo123</div>
+    </div>
+  );
+}
+
+function Dashboard({store}){
+  return (
+    <div>
+      <h2 className="text-2xl font-semibold mb-4">Overview</h2>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="p-4 bg-white rounded shadow flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-500">Pupils</div>
+            <div className="text-2xl font-bold">{store.students.length}</div>
+          </div>
+          <div className="text-sky-600">👥</div>
+        </div>
+        <div className="p-4 bg-white rounded shadow flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-500">Behaviour Logs</div>
+            <div className="text-2xl font-bold">{store.behaviour.length}</div>
+          </div>
+          <div className="text-sky-600">📝</div>
+        </div>
+        <div className="p-4 bg-white rounded shadow flex items-center justify-between">
+          <div>
+            <div className="text-sm text-slate-500">Assessments</div>
+            <div className="text-2xl font-bold">{store.assessments.length}</div>
+          </div>
+          <div className="text-sky-600">📊</div>
+        </div>
+      </div>
+
+      <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="bg-white p-4 rounded shadow">
+          <h3 className="font-semibold mb-2">Detention Alerts</h3>
+          <ul className="space-y-2">
+            {store.students.filter(s=>s.detention).map(s=> <li key={s.id} className="flex justify-between items-center"><div className="text-red-600 font-semibold">{s.name}</div><div className="text-sm text-slate-500">Points: {s.points}</div></li>)}
+            {store.students.filter(s=>s.detention).length===0 && (<li className="text-slate-500">No current detentions</li>)}
+          </ul>
+        </div>
+        <div className="bg-white p-4 rounded shadow">
+          <h3 className="font-semibold mb-2">Recent Behaviour</h3>
+          <div className="space-y-2 text-sm">
+            {store.behaviour.slice().reverse().slice(0,6).map(b=>{ const s = store.students.find(x=>x.id===b.studentId); return <div key={b.id}>{new Date(b.date).toLocaleString()} — <strong>{s? s.name: 'Unknown'}</strong> — Score {b.score}</div> })}
+            {store.behaviour.length===0 && <div className="text-slate-500">No recent behaviour logs</div>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Students({store, addStudent, toggleReveal}){
+  const [name, setName] = useState('');
+  const [modalStudent, setModalStudent] = useState(null);
+  const [filter, setFilter] = useState('');
+  const filtered = store.students.filter(s=> s.name.toLowerCase().includes(filter.toLowerCase()) || s.id.toLowerCase().includes(filter.toLowerCase()));
+  return (
+    <div>
+      <h2 className="text-xl mb-3">Students</h2>
+      <div className="flex gap-2 mb-4">
+        <input value={name} onChange={e=>setName(e.target.value)} placeholder="Student name" className="p-2 border" />
+        <button onClick={()=>{ addStudent(name); setName(''); }} className="px-3 bg-sky-600 text-white">Add Student</button>
+      </div>
+      <div className="space-y-2">
+        <div className="mb-3 flex items-center gap-2">
+          <input placeholder="Search students by name or ID" className="p-2 border flex-1" onChange={e=>setFilter(e.target.value)} value={filter} />
+          <button onClick={()=>{ setFilter(''); }} className="px-3 py-1 border rounded">Clear</button>
+        </div>
+        {filtered.map(s=> (
+          <div key={s.id} onClick={()=>setModalStudent(s)} className="p-2 bg-white rounded shadow flex justify-between cursor-pointer hover:shadow-lg transition">
+            <div>
+              <div className={`font-medium ${s.detention ? 'text-red-600 font-semibold':''}`}>{s.revealed ? s.name : dashedName(s.name)}</div>
+              <div className="text-xs text-slate-500">Points: {s.points || 0} {s.detention && <span className="inline-block px-2 py-0.5 ml-2 bg-red-600 text-white text-xs rounded">Detention</span>}</div>
+            </div>
+            <div className="text-sm text-slate-600">ID: {s.id.slice(-6)}</div>
+          </div>
+        ))}
+
+        {modalStudent && (
+          <div className="fixed inset-0 bg-black/40 flex items-center justify-center">
+            <div className="bg-white rounded shadow p-4 w-full max-w-md">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-lg font-semibold">{modalStudent.revealed ? modalStudent.name : dashedName(modalStudent.name)}</div>
+                  <div className="text-sm text-slate-500">ID: {modalStudent.id}</div>
+                </div>
+                <button onClick={()=>setModalStudent(null)} className="text-slate-500">Close</button>
+              </div>
+              <div className="mt-3 text-sm">
+                <div>Points: <strong>{modalStudent.points||0}</strong> {modalStudent.detention && <span className="inline-block px-2 py-0.5 ml-2 bg-red-600 text-white text-xs rounded">Detention</span>}</div>
+                <div className="mt-2">Actions:</div>
+                <div className="flex gap-2 mt-2">
+                  <button onClick={()=>{ toggleReveal(modalStudent.id); setModalStudent({...modalStudent, revealed: true}); }} className="px-3 py-1 bg-sky-600 text-white rounded">Reveal</button>
+                  <button onClick={()=>{ navigator.clipboard?.writeText(modalStudent.id); alert('ID copied'); }} className="px-3 py-1 border rounded">Copy ID</button>
+                </div>
+                <div className="mt-3">
+                  <div className="text-sm font-medium">Detention history</div>
+                  {modalStudent.detentionHistory && modalStudent.detentionHistory.length>0 ? (
+                    <ul className="mt-2 text-sm space-y-1">
+                      {modalStudent.detentionHistory.map((d,i)=> <li key={i} className="text-xs text-slate-600">{d.date} — {d.reason}</li>)}
+                    </ul>
+                  ) : (
+                    <div className="text-xs text-slate-500 mt-1">No detention history</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Attendance({store, recordAttendance, toggleReveal}){
+  const date = new Date().toISOString().slice(0,10);
+  const map = store.attendance[date] || {};
+  const codes = [
+    {code:'P',label:'Present'},
+    {code:'A',label:'Absent'},
+    {code:'L',label:'Late'},
+    {code:'H',label:'Holiday'},
+    {code:'I',label:'Illness'}
+  ];
+  const [selected, setSelected] = useState(store.students[0]?.id || '');
+  useEffect(()=>{ if(!selected && store.students[0]) setSelected(store.students[0].id); },[store.students]);
+
+  useEffect(()=>{
+    function onKey(e){
+      const key = e.key.toLowerCase();
+      const mapKey = {'p':'P','a':'A','l':'L','h':'H','i':'I'}[key];
+      if(mapKey){
+        const id = selected || store.students[0]?.id;
+        if(id){
+          recordAttendance(date, id, mapKey);
+          // reveal name when marked via keyboard
+          const s = store.students.find(x=>x.id===id);
+          if(s && !s.revealed) toggleReveal(id);
+        }
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return ()=> window.removeEventListener('keydown', onKey);
+  }, [selected, store.students]);
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xl mb-3">Attendance — {date}</h2>
+        <div className="text-sm text-slate-500">Mark using P / A / L / H / I</div>
+      </div>
+      <div className="mb-2 text-sm text-slate-500">Selected: {(() => { const s = store.students.find(s=>s.id===selected); return s ? (<span className={s.detention ? 'text-red-600 font-semibold':''}>{s.name}</span>) : '—'; })()} • Press P/A/L/H/I to mark</div>
+      <div className="flex gap-2 mb-3">
+        <button onClick={()=>bulkMark(date,'P')} className="px-3 py-1 bg-emerald-50 text-emerald-700 rounded" aria-label="Mark all present">All P</button>
+        <button onClick={()=>bulkMark(date,'A')} className="px-3 py-1 bg-red-50 text-red-700 rounded" aria-label="Mark all absent">All A</button>
+        <button onClick={()=>bulkMark(date,'L')} className="px-3 py-1 bg-amber-50 text-amber-700 rounded" aria-label="Mark all late">All L</button>
+        <button onClick={()=>bulkMark(date,'H')} className="px-3 py-1 bg-sky-50 text-sky-700 rounded" aria-label="Mark all holiday">All H</button>
+        <button onClick={()=>bulkMark(date,'I')} className="px-3 py-1 bg-violet-50 text-violet-700 rounded" aria-label="Mark all illness">All I</button>
+        <button onClick={undoLastAttendance} className="px-3 py-1 bg-yellow-50 text-yellow-700 rounded" aria-label="Undo last attendance">Undo</button>
+      </div>
+      <div className="space-y-2">
+        {store.students.map(s=> (
+          <div key={s.id} onClick={()=>{ setSelected(s.id); if(!s.revealed) toggleReveal(s.id); }} className={`flex items-center gap-2 bg-white p-2 rounded shadow ${selected===s.id? 'ring-2 ring-sky-300':''}`}>
+            <div className="flex-1">
+              <div className={`font-medium ${s.detention ? 'text-red-600 font-semibold':''}`}>{s.revealed ? s.name : dashedName(s.name)}</div>
+              <div className="text-xs text-slate-500">Points: {s.points || 0} {s.detention && <span className="inline-block px-2 py-0.5 ml-2 bg-red-600 text-white text-xs rounded">Detention</span>}</div>
+            </div>
+            <div className="flex gap-2">
+              {codes.map(({code,label})=> (
+                <button key={code} title={label} onClick={()=>recordAttendance(date,s.id,code)} className={`px-2 py-1 rounded text-sm ${map[s.id]===code? statusClass(code) : 'bg-slate-100 text-slate-700'}`}>
+                  {code}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Behaviour({store, recordBehaviour, toggleReveal}){
+  const [studentId,setStudentId] = useState(store.students[0]?.id || '');
+  const [score,setScore] = useState(3);
+  const [delta,setDelta] = useState(0);
+  const [note,setNote] = useState('');
+  const [detentionNotice, setDetentionNotice] = useState(null);
+  useEffect(()=>{ if(!studentId && store.students[0]) setStudentId(store.students[0].id); },[store.students]);
+  return (
+    <div>
+      <h2 className="text-xl mb-3">Behaviour</h2>
+      <div className="bg-white p-4 rounded shadow max-w-xl">
+        <div className="flex gap-2 mb-2">
+          <select className="flex-1 p-2 border" value={studentId} onChange={e=>setStudentId(e.target.value)}>
+            {store.students.map(s=> <option key={s.id} value={s.id}>{s.revealed ? s.name : dashedName(s.name)}</option>)}
+          </select>
+          <button onClick={()=>toggleReveal(studentId)} className="px-3 py-2 bg-slate-100 rounded">Reveal</button>
+        </div>
+        <div className="mb-2">
+          <div className="text-sm text-slate-500 mb-1">Score (click to choose)</div>
+          <div className="flex gap-2">
+            <button onClick={()=>setScore(1)} className={`px-3 py-1 rounded ${score===1? 'bg-emerald-600 text-white':'bg-emerald-50 text-emerald-800'}`}>1 — Excellent</button>
+            <button onClick={()=>setScore(2)} className={`px-3 py-1 rounded ${score===2? 'bg-sky-600 text-white':'bg-sky-50 text-sky-800'}`}>2 — Good</button>
+            <button onClick={()=>setScore(3)} className={`px-3 py-1 rounded ${score===3? 'bg-amber-500 text-white':'bg-amber-50 text-amber-800'}`}>3 — Disruptive</button>
+            <button onClick={()=>setScore(4)} className={`px-3 py-1 rounded ${score===4? 'bg-orange-700 text-white':'bg-orange-50 text-orange-800'}`}>4 — Poor</button>
+            <button onClick={()=>setScore(5)} className={`px-3 py-1 rounded ${score===5? 'bg-red-700 text-white':'bg-red-50 text-red-800'}`}>5 — Unsatisfactory</button>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <input className="p-2 border" value={delta} onChange={e=>setDelta(e.target.value)} placeholder="Points delta (+/-)" />
+        </div>
+        <textarea className="w-full p-2 border mt-2" value={note} onChange={e=>setNote(e.target.value)} placeholder="Optional note" />
+        <div className="mt-2">
+          <button onClick={()=>{
+            const res = recordBehaviour(studentId,score,delta,note);
+            setNote(''); setDelta(0);
+            if(res && res.detentionAssigned){
+              const s = res.student;
+              setDetentionNotice(`${s.name} assigned detention`);
+              setTimeout(()=>setDetentionNotice(null), 5000);
+            }
+          }} className="px-3 py-2 bg-sky-600 text-white">Record Behaviour</button>
+        </div>
+        {detentionNotice && (
+          <div className="mt-3 p-2 bg-red-100 border-l-4 border-red-600 text-red-800">{detentionNotice}</div>
+        )}
+      </div>
+
+      <div className="mt-4">
+        <h3 className="font-semibold">Recent logs</h3>
+        <div className="space-y-2 mt-2">
+          {store.behaviour.slice().reverse().map(b=>{
+            const s = store.students.find(x=>x.id===b.studentId);
+            const nameDisplay = s ? (s.revealed ? s.name : dashedName(s.name)) : 'Unknown';
+            return <div key={b.id} onClick={()=>s && toggleReveal(s.id)} className="p-2 bg-white rounded shadow cursor-pointer text-sm">{new Date(b.date).toLocaleString()} — <strong className={s && s.detention? 'text-red-600':''}>{nameDisplay}</strong> — Score {b.score} — Delta {b.delta} {b.note ? '— ' + b.note : ''}</div>
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Timetable({store,setTimetable}){
+  const days = ['Monday','Tuesday','Wednesday','Thursday','Friday'];
+  function update(day, idx, val){ const arr = [...store.timetable[day]]; arr[idx]=val; setTimetable(day, arr); }
+  return (
+    <div>
+      <h2 className="text-xl mb-3">Timetable</h2>
+      <div className="space-y-3">
+        {days.map(day=> (
+          <div key={day} className="bg-white p-3 rounded shadow">
+            <div className="font-medium mb-2">{day}</div>
+            <div className="grid grid-cols-5 gap-2">
+              {store.timetable[day].map((v,i)=>(
+                <input key={i} value={v} onChange={e=>update(day,i,e.target.value)} className="p-2 border" placeholder={`P${i+1}`} />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function Assessments({store, saveAssessment}){
+  const [studentId,setStudentId]=useState(store.students[0]?.id||'');
+  const [subject,setSubject]=useState('');
+  const [mark,setMark]=useState('');
+  return (
+    <div>
+      <h2 className="text-xl mb-3">Assessments</h2>
+      <div className="bg-white p-4 rounded shadow max-w-xl">
+        <select className="w-full p-2 mb-2 border" value={studentId} onChange={e=>setStudentId(e.target.value)}>
+          {store.students.map(s=> <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
+        <input value={subject} onChange={e=>setSubject(e.target.value)} placeholder="Subject" className="p-2 border w-full mb-2" />
+        <input value={mark} onChange={e=>setMark(e.target.value)} placeholder="Mark/Grade" className="p-2 border w-full mb-2" />
+        <button onClick={()=>{ saveAssessment(studentId,subject,mark); setSubject(''); setMark(''); }} className="px-3 py-2 bg-sky-600 text-white">Save Grade</button>
+      </div>
+      <div className="mt-4">
+        <h3 className="font-semibold">Recent</h3>
+        <div className="space-y-2 mt-2">
+          {store.assessments.slice().reverse().map(a=>{
+            const s = store.students.find(x=>x.id===a.studentId);
+            return <div key={a.id} className="p-3 bg-white rounded shadow">{new Date(a.date).toLocaleString()} — <strong>{s? s.name:'Unknown'}</strong> — {a.subject}: {a.mark}</div>
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Reports({exportAttendance, exportBehaviour, clearAll}){
+  return (
+    <div>
+      <h2 className="text-xl mb-3">Reports & Data</h2>
+      <div className="space-x-2">
+        <button onClick={exportAttendance} className="px-3 py-2 bg-white border">Export Attendance CSV</button>
+        <button onClick={exportBehaviour} className="px-3 py-2 bg-white border">Export Behaviour CSV</button>
+        <button onClick={clearAll} className="px-3 py-2 bg-red-50 border text-red-700">Clear All Data</button>
+      </div>
+    </div>
+  );
+}
+
+function PA({speak}){
+  const [text,setText]=useState('');
+  return (
+    <div>
+      <h2 className="text-xl mb-3">PA System</h2>
+      <textarea className="w-full p-2 border" rows={4} value={text} onChange={e=>setText(e.target.value)} placeholder="Type announcement here" />
+      <div className="mt-2">
+        <button onClick={()=>speak(text)} className="px-3 py-2 bg-sky-600 text-white">Announce</button>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+  </body>
+</html>
