@@ -15,6 +15,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Debug: show workspace
+        run: |
+          echo "--- Workspace info ---"
+          echo "PWD: $(pwd)"
+          echo "Listing top-level files:"
+          ls -la
+          echo "Disk usage of repo:" && du -sh . || true
+          echo "Git branch and commit:"
+          git rev-parse --abbrev-ref HEAD || true
+          git rev-parse HEAD || true
+          echo "Selected env vars:"
+          echo "GITHUB_REPOSITORY=$GITHUB_REPOSITORY"
+          echo "GITHUB_REF=$GITHUB_REF"
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          echo "RUNNER_WORKSPACE=$RUNNER_WORKSPACE"
+          echo "RUNNER_TEMP=$RUNNER_TEMP"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
