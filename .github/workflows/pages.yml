@@ -24,4 +24,5 @@ jobs:
           path: ./index.html
 
       - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v1
+        # use a later deploy-pages version to avoid deprecated dependencies
+        uses: actions/deploy-pages@v2
