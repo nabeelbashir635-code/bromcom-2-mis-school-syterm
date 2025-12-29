@@ -363,7 +363,7 @@ function App(){
           <div>
             {page==='dashboard' && <Dashboard store={store} />}
             {page==='students' && <Students store={store} addStudent={addStudent} toggleReveal={toggleReveal} />}
-            {page==='attendance' && <Attendance store={store} recordAttendance={recordAttendance} toggleReveal={toggleReveal} />}
+            {page==='attendance' && <Attendance store={store} recordAttendance={recordAttendance} toggleReveal={toggleReveal} bulkMark={bulkMark} undoLastAttendance={undoLastAttendance} />}
             {page==='behaviour' && <Behaviour store={store} recordBehaviour={recordBehaviour} toggleReveal={toggleReveal} />}
             {page==='timetable' && <Timetable store={store} setTimetable={setTimetable} />}
             {page==='assessments' && <Assessments store={store} saveAssessment={saveAssessment} />}
@@ -515,7 +515,7 @@ function Students({store, addStudent, toggleReveal}){
   );
 }
 
-function Attendance({store, recordAttendance, toggleReveal}){
+function Attendance({store, recordAttendance, toggleReveal, bulkMark, undoLastAttendance}){
   const date = new Date().toISOString().slice(0,10);
   const map = store.attendance[date] || {};
   const codes = [
